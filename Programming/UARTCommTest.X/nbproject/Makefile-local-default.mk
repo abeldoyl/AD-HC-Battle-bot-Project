@@ -34,4 +34,4 @@ DEP_GEN=${MP_JAVA_PATH}java -jar "C:/Program Files/Microchip/MPLABX/v6.20/mplab_
 MP_AS_DIR="C:\Program Files\Microchip\xc8\v3.10\pic-as\bin"
 MP_LD_DIR="C:\Program Files\Microchip\xc8\v3.10\pic-as\bin"
 # MP_AR_DIR is not defined
-DFP_DIR=C:/Program Files/Microchip/MPLABX/v6.20/packs/Microchip/PIC12-16F1xxx_DFP/1.7.242
+DFP_DIR=C:/Users/clezh/.mchp_packs/Microchip/PIC12-16F1xxx_DFP/1.10.270
