@@ -32,22 +32,22 @@
 ; It does NOT directly support RZ7886 FI/BI wiring.
 
 ; PIC16F1788 Configuration Bits
-    CONFIG FOSC = INTOSC
-    CONFIG WDTE = OFF
-    CONFIG PWRTE = ON
-    CONFIG MCLRE = ON
-    CONFIG CP = OFF
-    CONFIG CPD = OFF
-    CONFIG BOREN = ON
-    CONFIG CLKOUTEN = OFF
-    CONFIG IESO = OFF
-    CONFIG FCMEN = OFF
-    CONFIG WRT = OFF
-    CONFIG PLLEN = OFF
-    CONFIG STVREN = ON
-    CONFIG BORV = LO
-    CONFIG LPBOR = OFF
-    CONFIG LVP = OFF
+    CONFIG FOSC = INTOSC ; Use internal oscillator
+    CONFIG WDTE = OFF ; Disable Watchdog Timer
+    CONFIG PWRTE = ON ; Enable power-up startup delay
+    CONFIG MCLRE = ON ; Enable external reset pin
+    CONFIG CP = OFF ; Disable program memory protection
+    CONFIG CPD = OFF ; Disable EEPROM data protection
+    CONFIG BOREN = ON ; Reset PIC if supply voltage drops
+    CONFIG CLKOUTEN = OFF ; Disable clock output pin
+    CONFIG IESO = OFF ; Disable oscillator switching at startup
+    CONFIG FCMEN = OFF ; Disable clock failure monitoring
+    CONFIG WRT = OFF ; Disable program memory write protection
+    CONFIG PLLEN = OFF ; Disable PLL clock multiplier
+    CONFIG STVREN = ON ; Reset PIC on stack overflow/underflow
+    CONFIG BORV = LO ; Use lower brown-out reset threshold
+    CONFIG LPBOR = OFF ; Disable low-power brown-out reset
+    CONFIG LVP = OFF ; Disable low-voltage programming
 
 # 1 "C:\\Program Files\\Microchip\\xc8\\v3.10\\pic\\include/xc.inc" 1 3
 
@@ -10022,6 +10022,16 @@ CheckPacket:
     CLRF timeout_count
     CALL SetLeftMotor
     CALL SetRightMotor
+
+    ; Check if a timeout happened
+    ; while updating the motors
+    BANKSEL armed
+    MOVF armed,F
+    BTFSS STATUS,2
+    RETURN
+
+    ; Stop motors if no longer armed
+    CALL StopMotors
     RETURN
 
 ; Startup/Reconnect Safety
