@@ -13,15 +13,16 @@
 ; Left motor  = Joystick 1 Up/Down
 ; Right motor = Joystick 2 Up/Down
 ;
-; Hardware (L293DNE H-Bridge):
-; RC2 = CCP1 PWM, Left Motor Enable (1,2EN)
-; RC1 = CCP2 PWM, Right Motor Enable (3,4EN)
-; RA0 = Left Motor Input 1A
-; RB1 = Left Motor Input 2A
-; RA1 = Right Motor Input 3A
-; RB2 = Right Motor Input 4A
-; RC7 = UART RX
-; RC6 = UART TX (optional)
+; Hardware (L293DNE / L298N-style dual H-Bridge):
+; Motor-control signals all on one side of 28-pin PIC16F1788
+; RB0 (pin 21) = CCP1 PWM, Left Motor Enable (1,2EN)
+; RB1 (pin 22) = Left Motor Input 1A
+; RB2 (pin 23) = Left Motor Input 2A
+; RB3 (pin 24) = CCP2 PWM, Right Motor Enable (3,4EN)
+; RB4 (pin 25) = Right Motor Input 3A
+; RB5 (pin 26) = Right Motor Input 4A
+; RC7 (pin 18) = UART RX
+; RC6 (pin 17) = UART TX (optional)
 ;
 ; L293DNE uses two direction inputs and one PWM enable per motor.
 ; Forward: first input LOW, second input HIGH.
@@ -121,27 +122,30 @@ Setup:
     MOVLW 0x78
     MOVWF OSCCON
 
-    ; RA0 and RA1 are motor direction outputs
+    ; RA0 and RA1 are no longer motor outputs
     BANKSEL TRISA
-    BCF TRISA,0
-    BCF TRISA,1
+    BSF TRISA,0
+    BSF TRISA,1
 
-    ; RB1 and RB2 are additional H-Bridge direction outputs
+    ; Set up all six motor-control pins on PORTB
+    ; RB0 and RB3 stay as inputs until PWM is ready
+    ; RB1, RB2, RB4, RB5 are direction outputs
+    ; RB6 and RB7 stay as inputs for programming
     BANKSEL TRISB
-    BCF TRISB,1
-    BCF TRISB,2
+    MOVLW 0xC9       ; 11001001
+    MOVWF TRISB
 
-    ; Keep PWM outputs disabled during setup
+    ; Keep old CCP pins RC1 and RC2 as inputs
     BANKSEL TRISC
-    BSF TRISC,1      ; RC1 / CCP2
-    BSF TRISC,2      ; RC2 / CCP1
+    BSF TRISC,1      ; RC1 no longer CCP2 output
+    BSF TRISC,2      ; RC2 no longer CCP1 output
 
     ; UART pin directions
     BCF TRISC,6      ; RC6 / TX
     BSF TRISC,7      ; RC7 / RX
 
     ; Timer2 period
-    ; PWM Frequency = 15625 Hz (16 MHz, Timer2 1:1, PR2 = 255)
+    ; PWM Frequency = about 3906 Hz (16 MHz, Timer2 1:4, PR2 = 255)
     BANKSEL PR2
     MOVLW 0xFF
     MOVWF PR2
@@ -159,13 +163,13 @@ Setup:
     BANKSEL ANSELC
     CLRF ANSELC
 
-    ; Default UART and CCP pin locations
-    ; CCP1 = RC2
-    ; CCP2 = RC1
-    ; TX = RC6
-    ; RX = RC7
+    ; Move CCP1 and CCP2 to the right side of the PIC
+    ; CCP1 = RB0 (APFCON1 bit 6)
+    ; CCP2 = RB3 (APFCON1 bit 0)
+    ; TX = RC6 and RX = RC7 (unchanged)
     BANKSEL APFCON1
-    CLRF APFCON1
+    MOVLW 0x41
+    MOVWF APFCON1
 
 ; UART Setup
     ; 115200 Baud at 16 MHz
@@ -232,7 +236,7 @@ Setup:
 
     ; Start Timer2 for PWM
     BANKSEL T2CON
-    MOVLW 0x05       ; Prescaler 1:1, Timer2 ON
+    MOVLW 0x05       ; Prescaler 1:4, Timer2 ON
     MOVWF T2CON
 
 WaitPWM:
@@ -241,10 +245,10 @@ WaitPWM:
     BTFSS PIR1,1
     GOTO WaitPWM
 
-    ; Enable PWM output pins
-    BANKSEL TRISC
-    BCF TRISC,2      ; CCP1 left motor
-    BCF TRISC,1      ; CCP2 right motor
+    ; Enable new PWM output pins on PORTB
+    BANKSEL TRISB
+    BCF TRISB,0      ; RB0 / CCP1 left motor
+    BCF TRISB,3      ; RB3 / CCP2 right motor
 
     ; Enable peripheral and global interrupts
     BANKSEL INTCON
@@ -502,12 +506,11 @@ LeftForward:
     BCF left_dir,0
 
 LeftForwardDuty:
-    ; Forward: 1A LOW, 2A HIGH
+    ; Forward: 1A LOW (RB1), 2A HIGH (RB2)
     ; Set both pins even on first command after startup
-    BANKSEL LATA
-    BCF LATA,0
     BANKSEL LATB
-    BSF LATB,1
+    BCF LATB,1
+    BSF LATB,2
     BANKSEL left_value
 
     ; PWM = (Joystick - 128) * 2
@@ -532,11 +535,10 @@ LeftReverse:
     BSF left_dir,0
 
 LeftReverseDuty:
-    ; Reverse: 1A HIGH, 2A LOW
-    BANKSEL LATA
-    BSF LATA,0
+    ; Reverse: 1A HIGH (RB1), 2A LOW (RB2)
     BANKSEL LATB
-    BCF LATB,1
+    BSF LATB,1
+    BCF LATB,2
     BANKSEL left_value
 
     ; Special case: 0 maps to maximum duty
@@ -597,11 +599,10 @@ RightForward:
     BCF right_dir,0
 
 RightForwardDuty:
-    ; Forward: 3A LOW, 4A HIGH
-    BANKSEL LATA
-    BCF LATA,1
+    ; Forward: 3A LOW (RB4), 4A HIGH (RB5)
     BANKSEL LATB
-    BSF LATB,2
+    BCF LATB,4
+    BSF LATB,5
     BANKSEL right_value
     MOVLW 128
     SUBWF right_value,W
@@ -623,11 +624,10 @@ RightReverse:
     BSF right_dir,0
 
 RightReverseDuty:
-    ; Reverse: 3A HIGH, 4A LOW
-    BANKSEL LATA
-    BSF LATA,1
+    ; Reverse: 3A HIGH (RB4), 4A LOW (RB5)
     BANKSEL LATB
-    BCF LATB,2
+    BSF LATB,4
+    BCF LATB,5
     BANKSEL right_value
     MOVF right_value,F
     BTFSC STATUS,2
@@ -671,12 +671,11 @@ StopMotors:
     CLRF right_dir
 
     ; Return all H-Bridge direction inputs LOW
-    BANKSEL LATA
-    BCF LATA,0
-    BCF LATA,1
     BANKSEL LATB
     BCF LATB,1
     BCF LATB,2
+    BCF LATB,4
+    BCF LATB,5
 
     RETURN
 

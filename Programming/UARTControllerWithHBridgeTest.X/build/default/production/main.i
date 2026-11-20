@@ -20,15 +20,16 @@
 ; Left motor = Joystick 1 Up/Down
 ; Right motor = Joystick 2 Up/Down
 ;
-; Hardware (L293DNE H-Bridge):
-; RC2 = CCP1 PWM, Left Motor Enable (1,2EN)
-; RC1 = CCP2 PWM, Right Motor Enable (3,4EN)
-; RA0 = Left Motor Input 1A
-; RB1 = Left Motor Input 2A
-; RA1 = Right Motor Input 3A
-; RB2 = Right Motor Input 4A
-; RC7 = UART RX
-; RC6 = UART TX (optional)
+; Hardware (L293DNE / L298N-style dual H-Bridge):
+; Motor-control signals all on one side of 28-pin PIC16F1788
+; RB0 (pin 21) = CCP1 PWM, Left Motor Enable (1,2EN)
+; RB1 (pin 22) = Left Motor Input 1A
+; RB2 (pin 23) = Left Motor Input 2A
+; RB3 (pin 24) = CCP2 PWM, Right Motor Enable (3,4EN)
+; RB4 (pin 25) = Right Motor Input 3A
+; RB5 (pin 26) = Right Motor Input 4A
+; RC7 (pin 18) = UART RX
+; RC6 (pin 17) = UART TX (optional)
 ;
 ; L293DNE uses two direction inputs and one PWM enable per motor.
 ; Forward: first input LOW, second input HIGH.
@@ -9658,7 +9659,7 @@ stk_offset SET 0
 auto_size SET 0
 ENDM
 # 8 "C:\\Program Files\\Microchip\\xc8\\v3.10\\pic\\include/xc.inc" 2 3
-# 50 "main.S" 2
+# 51 "main.S" 2
  ; General Purpouse Registers
     ROBOT_ADDR EQU 0x80 ; Address selected on controller
     rx_state EQU 0x20 ; Current receive state
@@ -9733,27 +9734,30 @@ Setup:
     MOVLW 0x78
     MOVWF OSCCON
 
-    ; ((PORTA) and 0x7F), 0 and ((PORTA) and 0x7F), 1 are motor direction outputs
+    ; ((PORTA) and 0x7F), 0 and ((PORTA) and 0x7F), 1 are no longer motor outputs
     BANKSEL TRISA
-    BCF TRISA,0
-    BCF TRISA,1
+    BSF TRISA,0
+    BSF TRISA,1
 
-    ; ((PORTB) and 0x7F), 1 and ((PORTB) and 0x7F), 2 are additional H-Bridge direction outputs
+    ; Set up all six motor-control pins on PORTB
+    ; ((PORTB) and 0x7F), 0 and ((PORTB) and 0x7F), 3 stay as inputs until PWM is ready
+    ; ((PORTB) and 0x7F), 1, ((PORTB) and 0x7F), 2, ((PORTB) and 0x7F), 4, ((PORTB) and 0x7F), 5 are direction outputs
+    ; ((PORTB) and 0x7F), 6 and ((PORTB) and 0x7F), 7 stay as inputs for programming
     BANKSEL TRISB
-    BCF TRISB,1
-    BCF TRISB,2
+    MOVLW 0xC9 ; 11001001
+    MOVWF TRISB
 
-    ; Keep PWM outputs disabled during setup
+    ; Keep old CCP pins ((PORTC) and 0x7F), 1 and ((PORTC) and 0x7F), 2 as inputs
     BANKSEL TRISC
-    BSF TRISC,1 ; ((PORTC) and 0x7F), 1 / CCP2
-    BSF TRISC,2 ; ((PORTC) and 0x7F), 2 / CCP1
+    BSF TRISC,1 ; ((PORTC) and 0x7F), 1 no longer CCP2 output
+    BSF TRISC,2 ; ((PORTC) and 0x7F), 2 no longer CCP1 output
 
     ; UART pin directions
     BCF TRISC,6 ; ((PORTC) and 0x7F), 6 / TX
     BSF TRISC,7 ; ((PORTC) and 0x7F), 7 / RX
 
     ; Timer2 period
-    ; PWM Frequency = 15625 Hz (16 MHz, Timer2 1:1, PR2 = 255)
+    ; PWM Frequency = about 3906 Hz (16 MHz, Timer2 1:4, PR2 = 255)
     BANKSEL PR2
     MOVLW 0xFF
     MOVWF PR2
@@ -9771,13 +9775,13 @@ Setup:
     BANKSEL ANSELC
     CLRF ANSELC
 
-    ; Default UART and CCP pin locations
-    ; CCP1 = ((PORTC) and 0x7F), 2
-    ; CCP2 = ((PORTC) and 0x7F), 1
-    ; TX = ((PORTC) and 0x7F), 6
-    ; RX = ((PORTC) and 0x7F), 7
+    ; Move CCP1 and CCP2 to the right side of the PIC
+    ; CCP1 = ((PORTB) and 0x7F), 0 (APFCON1 bit 6)
+    ; CCP2 = ((PORTB) and 0x7F), 3 (APFCON1 bit 0)
+    ; TX = ((PORTC) and 0x7F), 6 and RX = ((PORTC) and 0x7F), 7 (unchanged)
     BANKSEL APFCON1
-    CLRF APFCON1
+    MOVLW 0x41
+    MOVWF APFCON1
 
 ; UART Setup
     ; 115200 Baud at 16 MHz
@@ -9844,7 +9848,7 @@ Setup:
 
     ; Start Timer2 for PWM
     BANKSEL T2CON
-    MOVLW 0x05 ; Prescaler 1:1, Timer2 ON
+    MOVLW 0x05 ; Prescaler 1:4, Timer2 ON
     MOVWF T2CON
 
 WaitPWM:
@@ -9853,10 +9857,10 @@ WaitPWM:
     BTFSS PIR1,1
     GOTO WaitPWM
 
-    ; Enable PWM output pins
-    BANKSEL TRISC
-    BCF TRISC,2 ; CCP1 left motor
-    BCF TRISC,1 ; CCP2 right motor
+    ; Enable new PWM output pins on PORTB
+    BANKSEL TRISB
+    BCF TRISB,0 ; ((PORTB) and 0x7F), 0 / CCP1 left motor
+    BCF TRISB,3 ; ((PORTB) and 0x7F), 3 / CCP2 right motor
 
     ; Enable peripheral and global interrupts
     BANKSEL INTCON
@@ -10114,12 +10118,11 @@ LeftForward:
     BCF left_dir,0
 
 LeftForwardDuty:
-    ; Forward: 1A LOW, 2A HIGH
+    ; Forward: 1A LOW (((PORTB) and 0x7F), 1), 2A HIGH (((PORTB) and 0x7F), 2)
     ; Set both pins even on first command after startup
-    BANKSEL LATA
-    BCF LATA,0
     BANKSEL LATB
-    BSF LATB,1
+    BCF LATB,1
+    BSF LATB,2
     BANKSEL left_value
 
     ; PWM = (Joystick - 128) * 2
@@ -10144,11 +10147,10 @@ LeftReverse:
     BSF left_dir,0
 
 LeftReverseDuty:
-    ; Reverse: 1A HIGH, 2A LOW
-    BANKSEL LATA
-    BSF LATA,0
+    ; Reverse: 1A HIGH (((PORTB) and 0x7F), 1), 2A LOW (((PORTB) and 0x7F), 2)
     BANKSEL LATB
-    BCF LATB,1
+    BSF LATB,1
+    BCF LATB,2
     BANKSEL left_value
 
     ; Special case: 0 maps to maximum duty
@@ -10209,11 +10211,10 @@ RightForward:
     BCF right_dir,0
 
 RightForwardDuty:
-    ; Forward: 3A LOW, 4A HIGH
-    BANKSEL LATA
-    BCF LATA,1
+    ; Forward: 3A LOW (((PORTB) and 0x7F), 4), 4A HIGH (((PORTB) and 0x7F), 5)
     BANKSEL LATB
-    BSF LATB,2
+    BCF LATB,4
+    BSF LATB,5
     BANKSEL right_value
     MOVLW 128
     SUBWF right_value,W
@@ -10235,11 +10236,10 @@ RightReverse:
     BSF right_dir,0
 
 RightReverseDuty:
-    ; Reverse: 3A HIGH, 4A LOW
-    BANKSEL LATA
-    BSF LATA,1
+    ; Reverse: 3A HIGH (((PORTB) and 0x7F), 4), 4A LOW (((PORTB) and 0x7F), 5)
     BANKSEL LATB
-    BCF LATB,2
+    BSF LATB,4
+    BCF LATB,5
     BANKSEL right_value
     MOVF right_value,F
     BTFSC STATUS,2
@@ -10283,12 +10283,11 @@ StopMotors:
     CLRF right_dir
 
     ; Return all H-Bridge direction inputs LOW
-    BANKSEL LATA
-    BCF LATA,0
-    BCF LATA,1
     BANKSEL LATB
     BCF LATB,1
     BCF LATB,2
+    BCF LATB,4
+    BCF LATB,5
 
     RETURN
 
